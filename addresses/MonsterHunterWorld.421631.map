@@ -1,0 +1,25 @@
+# Iceborne build 421631 (window title "MONSTER HUNTER: WORLD(421631)"). UNTESTED.
+# RVAs from HunterPie's MonsterHunterWorld.421631.map. This build has no verified
+# monster-list or damage-context address: large monsters are discovered from your
+# hits instead and hits are recorded without monster parts.
+
+Address LEVEL_OFFSET 0x05011710
+Address PARTY_ADDRESS 0x050112F0
+Address DAMAGE_ADDRESS 0x051C2478
+Address SESSION_OFFSET 0x051C2478
+Address QUEST_DATA_ADDRESS 0x0500CAF0
+Address ZONE_OFFSET 0x0500CA60
+Address WEAPON_ADDRESS 0x05011760
+Address EQUIPMENT_ADDRESS 0x05011760
+Address FUN_DEAL_DAMAGE 0x01CC51B0
+
+Offset LevelOffsets 0xA8
+Offset PARTY_OFFSETS 0x1AB0
+Offset DAMAGE_OFFSETS 0x258,0x38,0x450,0x8,0x48
+Offset SESSION_PARTY_OFFSETS 0x258,0x10,0x6574
+Offset QUEST_DATA_OFFSETS 0x0
+Offset QUEST_EXTRA_DATA_OFFSETS 0x17370
+Offset QUEST_TIMER_OFFSETS 0x13180
+Offset ZoneOffsets 0xAED0
+Offset WEAPON_OFFSETS 0x50,0xC0,0x8,0x78,0x2E8
+Offset LOCAL_PLAYER_OFFSETS 0x50,0x0

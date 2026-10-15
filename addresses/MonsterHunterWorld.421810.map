@@ -1,0 +1,33 @@
+# Iceborne build 421810 (window title "MONSTER HUNTER: WORLD(421810)").
+# RVAs are relative to MonsterHunterWorld.exe. Keys and values follow HunterPie's
+# MonsterHunterWorld.421810.map; FUN_SHOW_DAMAGE_CONTEXT was verified by the C#
+# MhwDpsMeter project. Copy this file to nativePC/plugins/MhwDpsMeter/Addresses/
+# and edit it to override a value; keys missing from the copy keep the built-in one.
+
+Address LEVEL_OFFSET 0x05013950
+Address PARTY_ADDRESS 0x05013530
+Address DAMAGE_ADDRESS 0x051C46B8
+Address SESSION_OFFSET 0x051C46B8
+Address QUEST_DATA_ADDRESS 0x0500ED30
+Address ZONE_OFFSET 0x0500ECA0
+Address WEAPON_ADDRESS 0x050139A0
+Address EQUIPMENT_ADDRESS 0x050139A0
+Address MONSTER_LIST_ADDRESS 0x0500CF40
+Address FUN_DEAL_DAMAGE 0x01CC5F80
+# Caller of FUN_DEAL_DAMAGE that still has the collision context (monster part).
+Address FUN_SHOW_DAMAGE_CONTEXT 0x002C3030
+
+Offset LevelOffsets 0xA8
+Offset PARTY_OFFSETS 0x1AB0
+Offset DAMAGE_OFFSETS 0x258,0x38,0x450,0x8,0x48
+Offset SESSION_PARTY_OFFSETS 0x258,0x10,0x6574
+Offset QUEST_DATA_OFFSETS 0x0
+# MaxDeaths (int) then Deaths (int).
+Offset QUEST_EXTRA_DATA_OFFSETS 0x17370
+# Remaining quest time in frames (u64), max time in frames (u32) at +0x10.
+Offset QUEST_TIMER_OFFSETS 0x13180
+Offset ZoneOffsets 0xAED0
+Offset WEAPON_OFFSETS 0x50,0xC0,0x8,0x78,0x2E8
+# sPlayer -> local hunter entity (prefix of HunterPie's PLAYER_BASIC_INFORMATION_OFFSETS).
+Offset LOCAL_PLAYER_OFFSETS 0x50,0x0
+Offset MONSTER_LIST_OFFSETS 0x38
