@@ -24,6 +24,9 @@ constexpr Signature kSystemCtor = {"cSystem:Ctor", "48 83 C1 08 FF 15 ?? ?? ?? ?
 constexpr Signature kDoAction = {"ActionController:DoAction", "48 8D 41 07 48 C1 E0 04 46 3B 04 08", -10};
 constexpr Signature kMainUpdate = {"Main:Update", "48 8B 8B 88 F8 0A 00 48 8B 01 FF 50 48", -25};
 constexpr Signature kGetQuestName = {"Quest:GetQuestName", "41 56 48 83 EC 20 48 8D B1 A0 AE 00 00", -20};
+// Points at "lea rax, [rip+vtable]"; rax still holds sMhRender there (SPL D3DModule).
+constexpr Signature kRenderAssignment = {
+    "sMhRender:Assignment", "89 44 24 20 E8 ?? ?? ?? ?? 48 8D 05 ?? ?? ?? ?? C7 83 ?? ?? ?? ?? 06 00 00 00 48 89 03", 9};
 
 /// Unique match of a signature in the exe's code, or 0.
 uintptr_t FindSignature(const mem::ModuleInfo& exe, const Signature& signature) {
@@ -55,6 +58,29 @@ std::string HexBytes(uintptr_t address, size_t count) {
 
 // Detours pass rax back unchanged (uint64_t returns) and forward every register
 // argument, so a hook stays transparent even where the exact signature is unknown.
+
+// ---- renderer -----------------------------------------------------------------
+
+// Mid-function detour: MinHook's relay jumps here (no call, so the stack and every
+// register are the game's). Store rax, then continue in the trampoline, which runs
+// the relocated "lea rax, [rip+...]" and jumps back into the game.
+extern "C" uintptr_t dps_captured_render;
+extern "C" void* dps_render_trampoline;
+extern "C" void dps_render_capture_stub();
+
+__asm__(
+    ".data\n"
+    ".p2align 3\n"
+    ".globl dps_captured_render\n"
+    "dps_captured_render: .quad 0\n"
+    ".globl dps_render_trampoline\n"
+    "dps_render_trampoline: .quad 0\n"
+    ".text\n"
+    ".p2align 4\n"
+    ".globl dps_render_capture_stub\n"
+    "dps_render_capture_stub:\n"
+    "    movq %rax, dps_captured_render(%rip)\n"
+    "    jmpq *dps_render_trampoline(%rip)\n");
 
 // ---- singletons -------------------------------------------------------------
 
@@ -276,6 +302,26 @@ std::vector<std::pair<std::string, uintptr_t>> ListSingletons() {
     }
     return out;
 }
+
+// ---- renderer ---------------------------------------------------------------------
+
+bool InstallRenderCapture(const mem::ModuleInfo& exe) {
+    const uintptr_t site = FindSignature(exe, kRenderAssignment);
+    return site && InstallRenderCaptureAt(site);
+}
+
+bool InstallRenderCaptureAt(uintptr_t site) {
+    uint8_t code[3] = {};
+    // Fail closed unless the site is the expected "lea rax, [rip+disp32]".
+    if (!mem::ReadBytes(site, code, sizeof(code)) || code[0] != 0x48 || code[1] != 0x8D || code[2] != 0x05) {
+        LOG_WARN("render capture site does not start with lea rax,[rip+x] (%s)", HexBytes(site, 8).c_str());
+        return false;
+    }
+    return Install("render-capture", reinterpret_cast<void*>(site), reinterpret_cast<void*>(&dps_render_capture_stub),
+                   &dps_render_trampoline);
+}
+
+uintptr_t CapturedRender() { return __atomic_load_n(&dps_captured_render, __ATOMIC_ACQUIRE); }
 
 // ---- damage -----------------------------------------------------------------------
 

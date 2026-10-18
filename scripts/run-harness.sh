@@ -16,5 +16,5 @@ fi
 WINE="$APP/Contents/SharedSupport/CrossOver/bin/wine"
 [ -x "$WINE" ] || { echo "CrossOver not found (set CROSSOVER_APP)" >&2; exit 1; }
 EXE="Z:$(printf '%s' "$ROOT/build/dps-harness.exe" | tr '/' '\\')"
-rm -f "$ROOT/build/nativePC/plugins/MhwDpsMeter/imgui.ini"
+rm -f "$ROOT/build/nativePC/plugins/MhwDpsMeter/imgui.ini" "$ROOT/build/nativePC/plugins/MhwDpsMeter/settings.json"
 "$WINE" --bottle "${CX_BOTTLE:-Steam}" "$EXE" "$@" 2>&1 | grep -v ':fixme:'

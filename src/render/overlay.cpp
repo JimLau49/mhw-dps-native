@@ -157,23 +157,93 @@ void DrawTrial(const meter::TrialView& trial, const Settings& s) {
     }
 }
 
+// ---- anchored overlay windows --------------------------------------------------------
+
+/// Where an overlay window sits, as a fraction of the screen at the window's pivot
+/// (top-right corner for the meter, top centre for the monster bars). Re-applied
+/// every frame, so a window keeps its corner while its size changes (a teammate with
+/// a long name, the time-trial readout, monsters spawning) instead of growing off
+/// screen. While the F9 panel is open the windows can be dragged and the anchor
+/// follows; it is saved when the panel closes.
+struct Anchor {
+    float x = -1.0f;  // < 0: default spot
+    float y = -1.0f;
+};
+
+constexpr ImVec2 kMeterPivot = {1.0f, 0.0f};
+constexpr ImVec2 kMonsterPivot = {0.5f, 0.0f};
+constexpr float kEdgeMargin = 16.0f;
+// The MacBook notch covers the top ~3.3% of the screen in the centre; the top-centre
+// monster row starts below it by default.
+constexpr float kNotchClearance = 0.045f;
+
+Anchor g_meterAnchor;
+Anchor g_monsterAnchor;
+bool g_anchorsLoaded = false;
+bool g_menuWasOpen = false;
+
+ImGuiWindowFlags OverlayFlags(bool menuOpen) {
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
+                             ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings;
+    if (!menuOpen)
+        flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoBringToFrontOnFocus;
+    return flags;
+}
+
+bool BeginAnchored(const char* name, const Anchor& anchor, ImVec2 pivot, ImVec2 fallback, bool menuOpen) {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const ImVec2 pos = anchor.x >= 0.0f && anchor.y >= 0.0f ? ImVec2(anchor.x * display.x, anchor.y * display.y) : fallback;
+    // Pinned while playing; free to drag while the F9 panel is open.
+    ImGui::SetNextWindowPos(ImVec2(std::round(pos.x), std::round(pos.y)), menuOpen ? ImGuiCond_Appearing : ImGuiCond_Always,
+                            pivot);
+    return ImGui::Begin(name, nullptr, OverlayFlags(menuOpen));
+}
+
+/// Inside Begin/End: while the panel is open, the anchor follows the window once it has
+/// been dragged. An untouched window keeps its default (-1) anchor, so it still picks up
+/// a better default spot in a later version.
+void FollowWindow(Anchor& anchor, ImVec2 pivot, ImVec2 fallback, bool menuOpen) {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    // A window appearing is still being measured and placed: not a drag.
+    if (!menuOpen || display.x <= 0.0f || display.y <= 0.0f || ImGui::IsWindowAppearing())
+        return;
+    const ImVec2 pos = ImGui::GetWindowPos();
+    const ImVec2 size = ImGui::GetWindowSize();
+    const ImVec2 point(pos.x + size.x * pivot.x, pos.y + size.y * pivot.y);
+    const ImVec2 placed = anchor.x >= 0.0f && anchor.y >= 0.0f ? ImVec2(anchor.x * display.x, anchor.y * display.y) : fallback;
+    if (std::fabs(point.x - placed.x) < 2.0f && std::fabs(point.y - placed.y) < 2.0f)
+        return;
+    anchor.x = std::clamp(point.x / display.x, 0.0f, 1.0f);
+    anchor.y = std::clamp(point.y / display.y, 0.0f, 0.95f);
+}
+
+void SaveAnchors() {
+    const Settings s = settings::Get();
+    auto same = [](float a, float b) { return std::fabs(a - b) < 0.0005f; };
+    if (same(s.meterAnchorX, g_meterAnchor.x) && same(s.meterAnchorY, g_meterAnchor.y) &&
+        same(s.monsterAnchorX, g_monsterAnchor.x) && same(s.monsterAnchorY, g_monsterAnchor.y))
+        return;
+    settings::Update([](Settings& value) {
+        value.meterAnchorX = g_meterAnchor.x;
+        value.meterAnchorY = g_meterAnchor.y;
+        value.monsterAnchorX = g_monsterAnchor.x;
+        value.monsterAnchorY = g_monsterAnchor.y;
+    });
+}
+
 void DrawOverlay(const meter::OverlayView& view, const Settings& s, bool menuOpen) {
     if (!s.overlayVisible || !view.show)
         return;
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
-                             ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing;
-    if (!menuOpen)
-        flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove |
-                 ImGuiWindowFlags_NoBringToFrontOnFocus;
-
     const ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 16.0f, 16.0f), ImGuiCond_FirstUseEver, ImVec2(1.0f, 0.0f));
     ImGui::SetNextWindowBgAlpha(std::clamp(s.overlayOpacity, 0.2f, 1.0f) * 0.85f);
-    if (!ImGui::Begin("DPS Meter##MhwDpsMeterNative", nullptr, flags)) {
+    const ImVec2 fallback(io.DisplaySize.x - kEdgeMargin, kEdgeMargin);
+    if (!BeginAnchored("DPS Meter##MhwDpsMeterNative", g_meterAnchor, kMeterPivot, fallback, menuOpen)) {
         ImGui::End();
         return;
     }
+    FollowWindow(g_meterAnchor, kMeterPivot, fallback, menuOpen);
 
     Text("DPS");
     ImGui::SameLine();
@@ -195,52 +265,102 @@ void DrawOverlay(const meter::OverlayView& view, const Settings& s, bool menuOpe
 }
 
 ImVec4 HealthColor(float fraction) {
-    // Muted enough that the white HP numbers on top stay readable.
     if (fraction > 0.5f)
-        return {0.24f, 0.62f, 0.30f, 1.0f};
+        return {0.27f, 0.66f, 0.33f, 1.0f};
     if (fraction > 0.25f)
-        return {0.80f, 0.58f, 0.14f, 1.0f};
-    return {0.78f, 0.24f, 0.20f, 1.0f};
+        return {0.85f, 0.62f, 0.16f, 1.0f};
+    return {0.82f, 0.26f, 0.22f, 1.0f};
 }
 
-/// Large-monster health bars, top centre by default (movable while F9 is open).
-void DrawMonsters(const meter::OverlayView& view, const Settings& s, bool menuOpen) {
+/// Brighter variant of HealthColor for text on the dark window background.
+ImVec4 HealthTextColor(float fraction) {
+    if (fraction > 0.5f)
+        return {0.52f, 0.88f, 0.56f, 1.0f};
+    if (fraction > 0.25f)
+        return {1.00f, 0.80f, 0.34f, 1.0f};
+    return {1.00f, 0.47f, 0.42f, 1.0f};
+}
+
+/// text shortened with an ellipsis to fit maxWidth (UTF-8 safe).
+std::string FitText(const std::string& text, float maxWidth) {
+    if (ImGui::CalcTextSize(text.c_str()).x <= maxWidth)
+        return text;
+    const char* ellipsis = "\u2026";
+    const float ellipsisWidth = ImGui::CalcTextSize(ellipsis).x;
+    std::string out = text;
+    while (!out.empty()) {
+        size_t length = out.size() - 1;
+        while (length > 0 && (static_cast<unsigned char>(out[length]) & 0xC0) == 0x80)
+            --length;
+        out.resize(length);
+        while (!out.empty() && out.back() == ' ')
+            out.pop_back();
+        if (ImGui::CalcTextSize(out.c_str()).x + ellipsisWidth <= maxWidth)
+            return out + ellipsis;
+    }
+    return ellipsis;
+}
+
+/// Large-monster health as a row of compact cards (name + %, thin bar), top centre.
+void DrawMonsters(const meter::OverlayView& view, const Settings& s, bool menuOpen, float fontSize) {
     if (!s.overlayVisible || view.monsters.empty())
         return;
+    constexpr size_t kPerRow = 5;
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
-                             ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing;
-    if (!menuOpen)
-        flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove |
-                 ImGuiWindowFlags_NoBringToFrontOnFocus;
+    ImGui::PushFont(nullptr, std::max(8.0f, std::round(fontSize * std::clamp(s.monsterBarScale, 0.5f, 2.0f))));
+    const float f = ImGui::GetFontSize();
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(std::round(f * 0.7f), std::round(f * 0.45f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(std::round(f * 1.1f), std::round(f * 0.5f)));
+    ImGui::SetNextWindowBgAlpha(std::clamp(s.overlayOpacity, 0.2f, 1.0f) * 0.85f);
 
     const ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, 16.0f), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.0f));
-    ImGui::SetNextWindowBgAlpha(std::clamp(s.overlayOpacity, 0.2f, 1.0f) * 0.85f);
-    if (!ImGui::Begin("Monsters##MhwDpsMeterNativeMonsters", nullptr, flags)) {
-        ImGui::End();
-        return;
-    }
+    const ImVec2 fallback(io.DisplaySize.x * 0.5f, std::max(kEdgeMargin, std::round(io.DisplaySize.y * kNotchClearance)));
+    if (BeginAnchored("Monsters##MhwDpsMeterNativeMonsters", g_monsterAnchor, kMonsterPivot, fallback, menuOpen)) {
+        FollowWindow(g_monsterAnchor, kMonsterPivot, fallback, menuOpen);
 
-    const float font = ImGui::GetFontSize();
-    const float width = font * 18.0f;
-    for (size_t i = 0; i < view.monsters.size(); ++i) {
-        const auto& monster = view.monsters[i];
-        const float fraction = std::clamp(monster.health / monster.maxHealth, 0.0f, 1.0f);
-        const std::string percent = StrFormat("%.0f%%", fraction * 100.0f);
-        const float startX = ImGui::GetCursorPosX();
-        Text(monster.name);
-        ImGui::SameLine(startX + width - ImGui::CalcTextSize(percent.c_str()).x);
-        Text(percent);
+        const float cardWidth = std::round(f * 8.5f);
+        const float barHeight = std::max(4.0f, std::round(f * 0.4f));
+        const float gap = std::max(2.0f, std::round(f * 0.2f));
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        const ImU32 nameColor = ImGui::GetColorU32(ImGuiCol_Text);
+        const ImU32 dimColor = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+        const ImU32 trackColor = IM_COL32(255, 255, 255, 36);
 
-        const std::string label = ThousandsSep(std::lround(monster.health)) + " / " + ThousandsSep(std::lround(monster.maxHealth));
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, HealthColor(fraction));
-        ImGui::ProgressBar(fraction, ImVec2(width, std::round(font * 1.05f)), label.c_str());
-        ImGui::PopStyleColor();
-        if (i + 1 < view.monsters.size())
-            ImGui::Spacing();
+        for (size_t i = 0; i < view.monsters.size(); ++i) {
+            if (i % kPerRow != 0)
+                ImGui::SameLine();
+            const auto& monster = view.monsters[i];
+            const float fraction = std::clamp(monster.health / monster.maxHealth, 0.0f, 1.0f);
+            const ImVec2 origin = ImGui::GetCursorScreenPos();
+            const float x = std::floor(origin.x);
+            const float y = std::floor(origin.y);
+
+            const std::string percent = StrFormat("%.0f%%", fraction * 100.0f);
+            const float percentWidth = ImGui::CalcTextSize(percent.c_str()).x;
+            const std::string name = FitText(monster.name, cardWidth - percentWidth - f * 0.5f);
+            draw->AddText(ImVec2(x, y), nameColor, name.c_str());
+            draw->AddText(ImVec2(std::floor(x + cardWidth - percentWidth), y),
+                          ImGui::ColorConvertFloat4ToU32(HealthTextColor(fraction)), percent.c_str());
+
+            const float barY = y + f + gap;
+            draw->AddRectFilled(ImVec2(x, barY), ImVec2(x + cardWidth, barY + barHeight), trackColor, barHeight * 0.5f);
+            if (fraction > 0.0f)
+                draw->AddRectFilled(ImVec2(x, barY), ImVec2(x + cardWidth * fraction, barY + barHeight),
+                                    ImGui::ColorConvertFloat4ToU32(HealthColor(fraction)), barHeight * 0.5f);
+
+            float height = f + gap + barHeight;
+            if (s.monsterHealthNumbers) {
+                const std::string numbers =
+                    ThousandsSep(std::lround(monster.health)) + " / " + ThousandsSep(std::lround(monster.maxHealth));
+                draw->AddText(ImVec2(x, barY + barHeight + gap), dimColor, numbers.c_str());
+                height += gap + f;
+            }
+            ImGui::Dummy(ImVec2(cardWidth, height));
+        }
     }
     ImGui::End();
+    ImGui::PopStyleVar(2);
+    ImGui::PopFont();
 }
 
 // ---- F9 panel ---------------------------------------------------------------------
@@ -361,6 +481,16 @@ void DrawPanel(const Settings& s) {
     bool monsterBars = s.showMonsterHealth;
     if (ImGui::Checkbox("Monster health bars", &monsterBars))
         settings::Update([&](Settings& value) { value.showMonsterHealth = monsterBars; });
+    if (s.showMonsterHealth) {
+        float scale = s.monsterBarScale;
+        ImGui::SetNextItemWidth(font * 12.0f);
+        if (ImGui::SliderFloat("Monster bar size", &scale, 0.5f, 1.5f, "%.2f"))
+            settings::Update([&](Settings& value) { value.monsterBarScale = scale; });
+        ImGui::SameLine();
+        bool numbers = s.monsterHealthNumbers;
+        if (ImGui::Checkbox("HP numbers", &numbers))
+            settings::Update([&](Settings& value) { value.monsterHealthNumbers = numbers; });
+    }
 
     float opacity = s.overlayOpacity;
     ImGui::SetNextItemWidth(font * 12.0f);
@@ -379,6 +509,12 @@ void DrawPanel(const Settings& s) {
     }
 
     Disabled("While this panel is open, drag the DPS Meter and Monsters windows by their title bars.");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset positions")) {
+        g_meterAnchor = Anchor{};
+        g_monsterAnchor = Anchor{};
+        SaveAnchors();
+    }
     Text(StrFormat("%s overlay   %s panel   %s diagnostics   %s reset training   %s time trial", s.keyOverlay.text.c_str(),
                    s.keyMenu.text.c_str(), s.keyDiagnostics.text.c_str(), s.keyReset.text.c_str(), s.keyTrial.text.c_str()));
     Disabled("Damage shows after you depart on a quest and in the training area; monster health on any field map.");
@@ -414,13 +550,21 @@ void ApplyStyle() {
     style.Colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.07f, 0.09f, 1.0f);
 }
 
-void Draw(bool menuOpen) {
+void Draw(bool menuOpen, float fontSize) {
     const Settings s = settings::Get();
+    if (!g_anchorsLoaded) {
+        g_meterAnchor = Anchor{s.meterAnchorX, s.meterAnchorY};
+        g_monsterAnchor = Anchor{s.monsterAnchorX, s.monsterAnchorY};
+        g_anchorsLoaded = true;
+    }
     const meter::OverlayView view = meter::Instance().Overlay();
-    DrawMonsters(view, s, menuOpen);
+    DrawMonsters(view, s, menuOpen, fontSize);
     DrawOverlay(view, s, menuOpen);
     if (menuOpen)
         DrawPanel(s);
+    if (g_menuWasOpen && !menuOpen)
+        SaveAnchors();
+    g_menuWasOpen = menuOpen;
 }
 
 }  // namespace dps::render::overlay

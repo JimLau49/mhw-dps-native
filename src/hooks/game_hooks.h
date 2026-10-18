@@ -23,6 +23,18 @@ std::vector<std::pair<std::string, uintptr_t>> ListSingletons();
 /// Class name from the object's MtDTI, decoded from its getDTI() thunk; "" if unknown.
 std::string DtiName(uintptr_t object);
 
+// ---- renderer -----------------------------------------------------------------
+
+/// Mid-function hook on the game's renderer setup (SharpPluginLoader's
+/// "sMhRender:Assignment"): records the sMhRender instance as it is assigned, so the
+/// game's own swap chain can be found without creating a D3D device of our own.
+/// Must run while the plugin loads (before WinMain sets up rendering).
+bool InstallRenderCapture(const mem::ModuleInfo& exe);
+/// Same hook on an explicit "lea rax, [rip+disp32]" site (also used by the self-test).
+bool InstallRenderCaptureAt(uintptr_t site);
+/// sMhRender captured by that hook, or 0.
+uintptr_t CapturedRender();
+
 // ---- damage -------------------------------------------------------------------
 
 /// FUN_DEAL_DAMAGE (local hits) plus, when the map has a verified entry,

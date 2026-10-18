@@ -11,6 +11,9 @@
 namespace dps {
 namespace {
 
+// 2: overlay key moved from F10 (MHW Seamless Co-op's join key) to F6.
+constexpr int kSettingsVersion = 2;
+
 Lock g_lock;
 Settings g_settings;
 bool g_loaded = false;
@@ -80,11 +83,37 @@ void ReadValue(const nlohmann::json& json, const char* name, T& value) {
     }
 }
 
+void ReadAnchor(const nlohmann::json& json, const char* name, float& x, float& y) {
+    try {
+        if (json.contains(name) && json[name].is_array() && json[name].size() == 2) {
+            x = json[name][0].get<float>();
+            y = json[name][1].get<float>();
+        }
+    } catch (...) {
+        LOG_WARN("settings: ignoring invalid value for %s", name);
+    }
+}
+
+void Clamp(Settings& s) {
+    s.overlayOpacity = std::clamp(s.overlayOpacity, 0.25f, 1.0f);
+    s.trialDurationSeconds = std::clamp(s.trialDurationSeconds, 5, 600);
+    s.monsterBarScale = std::clamp(s.monsterBarScale, 0.5f, 2.0f);
+    for (float* anchor : {&s.meterAnchorX, &s.meterAnchorY, &s.monsterAnchorX, &s.monsterAnchorY}) {
+        if (*anchor > 1.0f || !(*anchor == *anchor))
+            *anchor = -1.0f;
+    }
+}
+
 void SaveLocked() {
     nlohmann::json json;
     const Settings& s = g_settings;
+    json["settingsVersion"] = kSettingsVersion;
     json["overlayVisible"] = s.overlayVisible;
     json["showMonsterHealth"] = s.showMonsterHealth;
+    json["monsterBarScale"] = s.monsterBarScale;
+    json["monsterHealthNumbers"] = s.monsterHealthNumbers;
+    json["meterAnchor"] = {s.meterAnchorX, s.meterAnchorY};
+    json["monsterAnchor"] = {s.monsterAnchorX, s.monsterAnchorY};
     json["overlayOpacity"] = s.overlayOpacity;
     json["trialDurationSeconds"] = s.trialDurationSeconds;
     json["fontSize"] = s.fontSize;
@@ -154,8 +183,14 @@ void Load() {
     }
 
     Settings& s = g_settings;
+    int version = 1;
+    ReadValue(json, "settingsVersion", version);
     ReadValue(json, "overlayVisible", s.overlayVisible);
     ReadValue(json, "showMonsterHealth", s.showMonsterHealth);
+    ReadValue(json, "monsterBarScale", s.monsterBarScale);
+    ReadValue(json, "monsterHealthNumbers", s.monsterHealthNumbers);
+    ReadAnchor(json, "meterAnchor", s.meterAnchorX, s.meterAnchorY);
+    ReadAnchor(json, "monsterAnchor", s.monsterAnchorX, s.monsterAnchorY);
     ReadValue(json, "overlayOpacity", s.overlayOpacity);
     ReadValue(json, "trialDurationSeconds", s.trialDurationSeconds);
     ReadValue(json, "fontSize", s.fontSize);
@@ -179,9 +214,26 @@ void Load() {
         ReadValue(hooks, "questNames", s.questNames);
     }
 
-    s.overlayOpacity = std::clamp(s.overlayOpacity, 0.25f, 1.0f);
-    s.trialDurationSeconds = std::clamp(s.trialDurationSeconds, 5, 600);
+    Clamp(s);
     s.fontSize = s.fontSize <= 0.0f ? 0.0f : std::clamp(s.fontSize, 8.0f, 64.0f);
+
+    if (version < kSettingsVersion) {
+        // 0.1.0 defaulted the overlay toggle to F10, which MHW Seamless Co-op reserves for
+        // joining quests. Move the old defaults (F10 overlay, F6 diagnostics) to F6 and
+        // Shift+F6 unless F6 is already taken by another binding.
+        if (Upper(s.keyDiagnostics.text) == "F6")
+            s.keyDiagnostics = ParseHotkey("Shift+F6");
+        const Hotkey f6 = ParseHotkey("F6");
+        auto uses = [&](const Hotkey& key) {
+            return key.vk == f6.vk && key.ctrl == f6.ctrl && key.shift == f6.shift && key.alt == f6.alt;
+        };
+        if (Upper(s.keyOverlay.text) == "F10" && !uses(s.keyMenu) && !uses(s.keyReset) && !uses(s.keyTrial) &&
+            !uses(s.keyDiagnostics)) {
+            s.keyOverlay = f6;
+            LOG_INFO("settings: overlay key moved from F10 to F6 (F10 is MHW Seamless Co-op's join key)");
+        }
+        SaveLocked();
+    }
 }
 
 Settings Get() {
@@ -192,8 +244,7 @@ Settings Get() {
 void Update(const std::function<void(Settings&)>& fn) {
     LockGuard guard(g_lock);
     fn(g_settings);
-    g_settings.overlayOpacity = std::clamp(g_settings.overlayOpacity, 0.25f, 1.0f);
-    g_settings.trialDurationSeconds = std::clamp(g_settings.trialDurationSeconds, 5, 600);
+    Clamp(g_settings);
     SaveLocked();
 }
 

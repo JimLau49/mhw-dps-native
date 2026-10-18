@@ -21,6 +21,17 @@ Hotkey ParseHotkey(const std::string& text);
 struct Settings {
     bool overlayVisible = true;
     bool showMonsterHealth = true;
+    /// Monster bar text size relative to the meter's.
+    float monsterBarScale = 0.85f;
+    /// "current / max" HP under each monster bar.
+    bool monsterHealthNumbers = false;
+    /// Window anchors as fractions of the screen (< 0: default spot). The meter is
+    /// anchored by its top-right corner, the monster bars by their top centre, so
+    /// both stay in place while their size changes.
+    float meterAnchorX = -1.0f;
+    float meterAnchorY = -1.0f;
+    float monsterAnchorX = -1.0f;
+    float monsterAnchorY = -1.0f;
     float overlayOpacity = 0.92f;
     int trialDurationSeconds = 60;
     /// Overlay text size in pixels; 0 picks one from the window height.
@@ -28,11 +39,12 @@ struct Settings {
     bool writeFightLogs = true;
     std::string logLevel = "info";
 
+    // F10 is left free: MHW Seamless Co-op uses it (fixed) to join the posted quest.
     Hotkey keyMenu = ParseHotkey("F9");
-    Hotkey keyOverlay = ParseHotkey("F10");
+    Hotkey keyOverlay = ParseHotkey("F6");
     Hotkey keyReset = ParseHotkey("F7");
     Hotkey keyTrial = ParseHotkey("F8");
-    Hotkey keyDiagnostics = ParseHotkey("F6");
+    Hotkey keyDiagnostics = ParseHotkey("Shift+F6");
 
     // Optional hooks; each can be turned off if it misbehaves on a given setup.
     bool hookPartContext = true;

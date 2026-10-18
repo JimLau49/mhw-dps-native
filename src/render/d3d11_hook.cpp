@@ -314,8 +314,9 @@ void RenderFrame(IDXGISwapChain* swapChain) {
 
     ImGui::NewFrame();
     input::EndFrame();
-    ImGui::PushFont(nullptr, FontSize(io));
-    overlay::Draw(menu);
+    const float fontSize = FontSize(io);
+    ImGui::PushFont(nullptr, fontSize);
+    overlay::Draw(menu, fontSize);
     ImGui::PopFont();
     ImGui::Render();
 
@@ -405,9 +406,24 @@ bool InstallForSwapChain(IDXGISwapChain* swapChain, const char* how) {
     return true;
 }
 
-bool InstallViaDummyDevice() {
-    if (g_installed.load())
-        return true;
+namespace {
+
+struct ProbeStart {
+    HANDLE done = nullptr;
+    bool ok = false;
+};
+
+/// Creates the probe window, device and swap chain, hooks Present through it, then
+/// keeps all of it alive and answers the window's messages for the rest of the
+/// session. Releasing the probe device, or leaving its window without a message
+/// loop, could block the game's own thread (a 0.1.0 build froze at the startup load).
+DWORD WINAPI ProbeThread(LPVOID param) {
+    auto* start = static_cast<ProbeStart*>(param);
+    auto finish = [&](bool ok) {
+        start->ok = ok;
+        SetEvent(start->done);  // start is the caller's from here on
+    };
+
     HMODULE d3d11 = GetModuleHandleW(L"d3d11.dll");
     if (!d3d11)
         d3d11 = LoadLibraryW(L"d3d11.dll");
@@ -415,8 +431,9 @@ bool InstallViaDummyDevice() {
                               GetProcAddress(d3d11, "D3D11CreateDeviceAndSwapChain"))
                         : nullptr;
     if (!create) {
-        LOG_ERROR("D3D11CreateDeviceAndSwapChain not available");
-        return false;
+        LOG_ERROR("probe: D3D11CreateDeviceAndSwapChain not available");
+        finish(false);
+        return 0;
     }
 
     WNDCLASSEXW wc{};
@@ -425,11 +442,12 @@ bool InstallViaDummyDevice() {
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = L"MhwDpsMeterProbe";
     RegisterClassExW(&wc);
-    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MhwDpsMeterProbe", WS_OVERLAPPED, 0, 0, 64, 64, nullptr, nullptr,
-                                  wc.hInstance, nullptr);
+    HWND window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, wc.lpszClassName, L"MhwDpsMeterProbe", WS_OVERLAPPED, 0,
+                                  0, 64, 64, nullptr, nullptr, wc.hInstance, nullptr);
     if (!window) {
-        LOG_ERROR("probe window creation failed (%lu)", GetLastError());
-        return false;
+        LOG_ERROR("probe: window creation failed (%lu)", GetLastError());
+        finish(false);
+        return 0;
     }
 
     DXGI_SWAP_CHAIN_DESC desc{};
@@ -448,22 +466,48 @@ bool InstallViaDummyDevice() {
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;
     D3D_FEATURE_LEVEL level{};
+    LOG_INFO("probe: creating device");
     const HRESULT hr = create(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, levels, static_cast<UINT>(std::size(levels)),
                               D3D11_SDK_VERSION, &desc, &swapChain, &device, &level, &context);
     bool ok = false;
     if (SUCCEEDED(hr) && swapChain)
         ok = InstallForSwapChain(swapChain, "probe device");
     else
-        LOG_ERROR("probe D3D11CreateDeviceAndSwapChain failed 0x%08lX", static_cast<unsigned long>(hr));
+        LOG_ERROR("probe: D3D11CreateDeviceAndSwapChain failed 0x%08lX", static_cast<unsigned long>(hr));
+    LOG_INFO("probe: %s; keeping the probe alive", ok ? "Present hooked" : "failed");
+    finish(ok);
 
-    if (swapChain)
-        swapChain->Release();
-    if (context)
-        context->Release();
-    if (device)
-        device->Release();
-    DestroyWindow(window);
-    UnregisterClassW(wc.lpszClassName, wc.hInstance);
+    MSG msg;
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    return 0;
+}
+
+}  // namespace
+
+bool InstallViaDummyDevice() {
+    if (g_installed.load())
+        return true;
+    auto* start = new ProbeStart;
+    start->done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE thread = start->done ? CreateThread(nullptr, 0, ProbeThread, start, 0, nullptr) : nullptr;
+    if (!thread) {
+        LOG_ERROR("probe: could not start its thread (%lu)", GetLastError());
+        if (start->done)
+            CloseHandle(start->done);
+        delete start;
+        return false;
+    }
+    CloseHandle(thread);
+    if (WaitForSingleObject(start->done, 20000) != WAIT_OBJECT_0) {
+        LOG_WARN("probe: no result after 20 s; giving up on the overlay for this session");
+        return false;  // the probe thread may still use start: leave it allocated
+    }
+    const bool ok = start->ok;
+    CloseHandle(start->done);
+    delete start;
     return ok;
 }
 

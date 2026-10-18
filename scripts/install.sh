@@ -45,5 +45,7 @@ if [ ! -f "$GAME_DIR/dinput8.dll" ] || [ ! -f "$GAME_DIR/loader.dll" ]; then
 fi
 
 mkdir -p "$GAME_DIR/nativePC/plugins"
-cp "$DLL" "$TARGET"
-echo "installed $TARGET"
+# Copy then rename: a running game keeps the old file, the next launch gets the new one.
+cp "$DLL" "$TARGET.new"
+mv -f "$TARGET.new" "$TARGET"
+echo "installed $TARGET (takes effect the next time the game starts)"

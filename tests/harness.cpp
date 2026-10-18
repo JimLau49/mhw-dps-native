@@ -20,6 +20,7 @@
 #include "common.h"
 #include "game/game_reader.h"
 #include "game_data.h"
+#include "hooks/game_hooks.h"
 #include "hooks/hook_manager.h"
 #include "log.h"
 #include "memory.h"
@@ -127,6 +128,41 @@ void TestPatterns() {
     // The guarded-copy routine's body: push rsi; push rdi; mov rdi,rcx; mov rsi,rdx; mov rcx,r8; rep movsb
     const auto own = mem::ScanModule(self, mem::ParsePattern("56 57 48 89 CF 48 89 D6 4C 89 C1 F3 A4"), 2);
     Check(own.size() == 1, "unique code pattern found in this exe's .text");
+}
+
+// ---- mid-function render capture ---------------------------------------------------
+
+// Mirrors the game's sMhRender:Assignment site: rax holds a value, then
+// "lea rax, [rip+x]" overwrites it. The hook must record the old rax and the function
+// must still return the lea's result, with r11 (not touched by the stub) intact.
+extern "C" uintptr_t dps_test_render_fn();
+extern "C" char dps_test_render_site[];
+extern "C" char dps_test_render_data[];
+__asm__(
+    ".data\n"
+    ".p2align 4\n"
+    ".globl dps_test_render_data\n"
+    "dps_test_render_data: .quad 0x5a5a5a5a5a5a5a5a\n"
+    ".text\n"
+    ".p2align 4\n"
+    ".globl dps_test_render_fn\n"
+    "dps_test_render_fn:\n"
+    "    movabsq $0x1122334455667788, %rax\n"
+    "    movq %rax, %r11\n"
+    ".globl dps_test_render_site\n"
+    "dps_test_render_site:\n"
+    "    leaq dps_test_render_data(%rip), %rax\n"
+    "    cmpq %rax, %r11\n"  // r11 must still be the old rax (never equal to the lea result)
+    "    jne 1f\n"
+    "    xorl %eax, %eax\n"
+    "1:  ret\n");
+
+void TestRenderCapture() {
+    Section("mid-function render capture hook");
+    Check(dps_test_render_fn() == reinterpret_cast<uintptr_t>(dps_test_render_data), "test site works unhooked");
+    Check(hooks::InstallRenderCaptureAt(reinterpret_cast<uintptr_t>(dps_test_render_site)), "hook on a lea rax,[rip+x] site");
+    Check(dps_test_render_fn() == reinterpret_cast<uintptr_t>(dps_test_render_data), "relocated lea still yields its address");
+    Check(hooks::CapturedRender() == 0x1122334455667788ULL, "rax before the lea captured");
 }
 
 // ---- address map / data ------------------------------------------------------------
@@ -353,6 +389,8 @@ void AfterDraw(IDXGISwapChain* swapChain, ID3D11DeviceContext* context) {
     back->Release();
 }
 
+bool g_useProbe = false;
+
 void TestRender(int frames, bool flip) {
     Section(flip ? "D3D11 Present hook + ImGui (flip model)" : "D3D11 Present hook + ImGui");
 
@@ -412,7 +450,10 @@ void TestRender(int frames, bool flip) {
 
     if (!render::Installed()) {
         render::SetAfterDrawCallback(&AfterDraw);
-        Check(render::InstallForSwapChain(swapChain, "harness"), "Present/ResizeBuffers hooked (MinHook on this D3D implementation)");
+        if (g_useProbe)
+            Check(render::InstallViaDummyDevice(), "Present hooked through the persistent probe device");
+        else
+            Check(render::InstallForSwapChain(swapChain, "harness"), "Present/ResizeBuffers hooked (MinHook on this D3D implementation)");
     }
 
     // A fake hunt so the real overlay path draws party rows (with CJK names).
@@ -427,7 +468,7 @@ void TestRender(int frames, bool flip) {
     view.showCarts = true;
     view.deaths = 1;
     view.maxDeaths = 3;
-    view.monsters = {{"Rathalos", 14210.0f, 21680.0f}, {"Anjanath", 7350.0f, 19250.0f}, {"Velkhana", 3020.0f, 26400.0f}};
+    view.monsters = {{"Barroth", 2156.0f, 2156.0f}, {"Rathian", 1540.0f, 3540.0f}, {"Shrieking Legiana", 610.0f, 4908.0f}};
     meter::Instance().PublishForTest(view);
     render::input::SetMenuOpen(true);
 
@@ -534,10 +575,13 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--no-render") == 0)
             render = false;
+        if (std::strcmp(argv[i], "--probe") == 0)
+            g_useProbe = true;
     }
 
     TestMemory();
     TestPatterns();
+    TestRenderCapture();
     TestAddressMap();
     TestGameData();
     TestFightLogs();

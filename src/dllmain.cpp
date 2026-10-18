@@ -31,6 +31,7 @@ namespace {
 
 mem::ModuleInfo g_exe;
 bool g_singletonHook = false;
+bool g_renderCapture = false;
 
 void OnGameUpdate() { meter::Instance().Update(); }
 
@@ -59,10 +60,11 @@ std::string ModuleNameOf(uintptr_t address) {
 /// the cD3DRender, +0x1488 its DX11 swap chain). Validated without calling into it
 /// until its vtable is known to live in a DXGI/D3D module.
 IDXGISwapChain* FindGameSwapChain(std::string& why) {
-    const uintptr_t render = hooks::FindSingleton("sMhRender");
+    uintptr_t render = hooks::CapturedRender();
+    if (!render)
+        render = hooks::FindSingleton("sMhRender");
     if (!render) {
-        why = g_singletonHook ? StrFormat("sMhRender not among %zu singletons", hooks::SingletonCount())
-                              : "singleton hook unavailable";
+        why = g_renderCapture ? "renderer not set up yet" : "render capture hook unavailable";
         return nullptr;
     }
     uintptr_t renderer = 0, swapChain = 0, vtable = 0, present = 0;
@@ -178,8 +180,10 @@ void Worker(void*) {
             render::InstallForSwapChain(swapChain, "game swap chain");
             break;
         }
-        // Without sMhRender after a while, find Present through a throwaway device.
-        if (SecondsSince(searchStart) > (g_singletonHook ? 15.0 : 3.0)) {
+        // Last resort: find Present through a probe device. Only once the game has had
+        // time to finish its startup load: creating and tearing down a second device
+        // while the game is loading froze it (0.1.0 builds with a 3 s wait).
+        if (SecondsSince(searchStart) > 20.0) {
             LOG_WARN("game swap chain not found (%s); using a probe device", why.c_str());
             std::string names;
             for (const auto& [name, instance] : hooks::ListSingletons()) {
@@ -232,8 +236,9 @@ void Startup(HMODULE self) {
     if (!hooks::Init())
         return;
 
-    // Singletons are constructed during WinMain; this is the only chance to see them.
+    // Singletons and the renderer are set up during WinMain; this is the only chance to see them.
     g_singletonHook = hooks::InstallSingletonCapture(g_exe);
+    g_renderCapture = hooks::InstallRenderCapture(g_exe);
 
     if (!RunDetached(&Worker, nullptr))
         LOG_ERROR("could not start the worker thread");

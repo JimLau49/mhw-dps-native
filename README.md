@@ -64,11 +64,14 @@ scripts/install.sh uninstall
 
 | Key | Action |
 | --- | --- |
-| **F9** | Settings / diagnostics panel (drag the meter by its title bar while open) |
-| **F10** | Show / hide the overlay |
+| **F9** | Settings / diagnostics panel (drag the windows by their title bars while open) |
+| **F6** | Show / hide the overlay |
 | **F7** | Training area: reset damage (also clears a finished trial) |
 | **F8** | Training area: arm / cancel a time trial |
-| **F6** | Write `logs/live-debug.json` diagnostics |
+| **Shift+F6** | Write `logs/live-debug.json` diagnostics |
+
+F10 is left free for MHW Seamless Co-op, which uses it to join the posted quest. (0.1.0 used F10 for the overlay; settings from it
+are moved to F6 automatically.)
 
 On a Mac keyboard the F-keys trigger media functions unless you hold **fn** (or enable
 *Use F1, F2, etc. keys as standard function keys* in System Settings → Keyboard). Any
@@ -90,12 +93,21 @@ have no quest-award table.
 
 ### Monster health
 
-A second window lists every large monster alive on the current map with its HP bar
-(green above 50 %, yellow above 25 %, then red) and `current / max` HP. It also works in
-expeditions and the Guiding Lands, and disappears when the monster dies or is captured.
-Small monsters, barrels and training targets are not shown. Turn it off with **Monster
-health bars** in the F9 panel (`showMonsterHealth` in `settings.json`); F10 hides it
-together with the damage meter. While F9 is open both windows can be dragged.
+A compact row at the top centre (just below a MacBook's notch) shows every large monster alive on the current map: its
+name, HP percentage and a thin bar (green above 50 %, yellow above 25 %, then red), up to
+five per row. It also works in expeditions and the Guiding Lands, and a monster drops off
+when it dies or is captured. Small monsters, barrels and training targets are not shown.
+
+In the F9 panel: **Monster health bars** turns it off, **Monster bar size** scales it
+(relative to the meter's text), and **HP numbers** adds `current / max` under each bar.
+F6 hides it together with the damage meter.
+
+### Moving the windows
+
+While F9 is open, drag the meter or the monster row by its title bar. The meter keeps its
+top-right corner and the monster row its top centre where you leave them, so they stay on
+screen as they grow (a teammate joins, a time trial starts, a monster spawns). Positions
+are saved when the panel closes; **Reset positions** puts both back.
 
 ### Training area and time trials
 
@@ -128,11 +140,14 @@ thread, so the results screen does not hitch.
 
 | Key | Default | |
 | --- | --- | --- |
-| `overlayVisible`, `overlayOpacity` | `true`, `0.92` | also changed from F9 / F10 |
+| `overlayVisible`, `overlayOpacity` | `true`, `0.92` | also changed from F9 / F6 |
 | `showMonsterHealth` | `true` | large-monster health bars |
+| `monsterBarScale` | `0.85` | monster row text size relative to the meter's (0.5–2) |
+| `monsterHealthNumbers` | `false` | `current / max` HP under each monster bar |
+| `meterAnchor`, `monsterAnchor` | `[-1, -1]` | window positions as screen fractions (set by dragging; `-1` = default) |
 | `trialDurationSeconds` | `60` | |
 | `fontSize` | `0` | 0 = scale with the window height (~16 px at 1080p) |
-| `keys.menu` … `keys.diagnostics` | F9, F10, F7, F8, F6 | `Ctrl+`, `Shift+`, `Alt+` prefixes, names like `Insert`, `Numpad5`, or `0x77` |
+| `keys.menu`, `.overlay`, `.reset`, `.trial`, `.diagnostics` | F9, F6, F7, F8, Shift+F6 | `Ctrl+`, `Shift+`, `Alt+` prefixes, names like `Insert`, `Numpad5`, or `0x77` |
 | `hooks.partContext` | `true` | monster part of each of your hits |
 | `hooks.actions` | `true` | move name of each of your hits |
 | `hooks.mainUpdate` | `true` | poll on the game thread (else the render thread) |
@@ -149,7 +164,7 @@ Japanese, Chinese and Korean hunter names render.
 
 Everything the plugin does is logged to `nativePC/plugins/MhwDpsMeter/MhwDpsMeter.log`
 (the previous run is kept as `MhwDpsMeter.log.prev`). Open the F9 panel and expand
-**Diagnostics** for the live state, or press F6 to write it to `logs/live-debug.json`.
+**Diagnostics** for the live state, or press Shift+F6 to write it to `logs/live-debug.json`.
 
 - **No log file at all**: Stracker's Loader did not load the plugin. Check `dinput8.dll`
   and `loader.dll` are beside the exe and the DLL is directly in `nativePC/plugins/`.
@@ -185,10 +200,11 @@ To remove the plugin, delete `nativePC/plugins/MhwDpsMeter.dll` (or run
   SharpPluginLoader's byte signatures, `ActionController::DoAction` (move names),
   `sMhMain` update (game-thread polling) and `GetQuestName`. Every detour forwards all
   register arguments and the return value unchanged.
-- **Overlay.** The worker takes the game's `IDXGISwapChain` from `sMhRender`
-  (`+0x78 → +0x1488`, DX11), validates that its vtable lives in a DXGI/D3D module, and
-  inline-hooks `Present` and `ResizeBuffers`. If `sMhRender` cannot be found it creates a
-  throwaway device on a hidden window to locate them. Dear ImGui (DX11 + Win32 backends)
+- **Overlay.** The worker looks for the game's `IDXGISwapChain` through `sMhRender`
+  (`+0x78 → +0x1488`, DX11). `sMhRender` is not among the singletons `cSystem` records
+  on 421810, so in practice it creates a throwaway device on a hidden window to locate
+  `Present` and `ResizeBuffers`, inline-hooks them, and draws only on swap chains that
+  present to the game window. Dear ImGui (DX11 + Win32 backends)
   draws on the game's own device; `D3DCompile` comes from the bottle's
   `d3dcompiler_47.dll` at runtime. Window messages are queued and replayed into ImGui on
   the render thread, and while F9 is open the clicks ImGui uses are kept from the game.

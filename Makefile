@@ -1,7 +1,7 @@
 # MHW DPS Meter (native) — Stracker's Loader plugin for Monster Hunter: World.
 # Cross-compiles a Windows x64 DLL with mingw-w64 (brew install mingw-w64).
 
-VERSION     := 0.1.0
+VERSION     := 0.1.1
 BUILD_STAMP := $(shell date -u +"%Y-%m-%d %H:%MZ")
 
 TOOLCHAIN ?= x86_64-w64-mingw32-
