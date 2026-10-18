@@ -26,26 +26,39 @@ No .NET, no SharpPluginLoader, no CRCBypass.
 
 ## Install
 
-Copy `MhwDpsMeter.dll` into the game's `nativePC/plugins/` folder:
+No compiling needed:
 
-```text
-Monster Hunter World/
-  dinput8.dll                      Stracker's Loader
-  loader.dll
-  nativePC/plugins/MhwDpsMeter.dll  this plugin
-```
+1. Install [Stracker's Loader](https://www.nexusmods.com/monsterhunterworld/mods/1982) if you
+   don't have it yet.
+2. Download `MhwDpsMeter-native-<version>.zip` from
+   [Releases](https://github.com/JimLau49/mhw-dps-native/releases).
+3. Extract it into the folder that contains `MonsterHunterWorld.exe` (in Steam: right-click
+   the game → Manage → Browse local files). You should end up with:
 
-From this folder on a Mac (finds a bottle named `Steam` in `~/CXPBottles` or CrossOver's
-default `~/Library/Application Support/CrossOver/Bottles`):
+   ```text
+   Monster Hunter World/
+     dinput8.dll                       Stracker's Loader
+     loader.dll
+     nativePC/plugins/MhwDpsMeter.dll  this plugin
+   ```
+
+4. Start the game and press **F9** (fn+F9 on a Mac keyboard): the settings panel shows the
+   plugin loaded.
+
+It is a regular Windows DLL, so it should run wherever Stracker's Loader does: Windows,
+Linux/Proton (launch option `WINEDLLOVERRIDES="dinput8=n,b" %command%`) and macOS/CrossOver.
+So far it has only been tested on CrossOver. On first launch it creates
+`nativePC/plugins/MhwDpsMeter/` with `settings.json`, `MhwDpsMeter.log` and `logs/`. To
+uninstall, delete `nativePC/plugins/MhwDpsMeter.dll`.
+
+To build and install from source on a Mac instead (finds a bottle named `Steam` in
+`~/CXPBottles` or CrossOver's default `~/Library/Application Support/CrossOver/Bottles`):
 
 ```sh
 make                      # needs: brew install mingw-w64
 scripts/install.sh        # MHW_DIR=/path/to/game scripts/install.sh for another location
 scripts/install.sh uninstall
 ```
-
-On first launch the plugin creates `nativePC/plugins/MhwDpsMeter/` with
-`settings.json`, `MhwDpsMeter.log` and `logs/`.
 
 ## Keys
 

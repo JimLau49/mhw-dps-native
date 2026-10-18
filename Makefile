@@ -88,6 +88,9 @@ PACKAGE    := $(DIST)/MhwDpsMeter-native-$(VERSION).zip
 
 .PHONY: all plugin harness package clean data
 
+# Flag changes in this file must rebuild everything (make does not track flags).
+$(LIB_OBJ) $(PLUGIN_OBJ) $(TEST_OBJ): Makefile
+
 all: plugin harness
 
 plugin: $(DLL)
