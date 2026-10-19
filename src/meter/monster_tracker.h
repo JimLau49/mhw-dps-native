@@ -22,7 +22,11 @@ struct MonsterState {
 /// the solo/arena fallback when the quest-award damage table is not allocated.
 class MonsterTracker {
 public:
-    void Reset();
+    /// countFromFirstSight: count only HP lost after a monster is first seen
+    /// (expeditions, where monsters may already be hurt when you arrive).
+    void Reset(bool countFromFirstSight = false);
+    /// Start counting from zero again without forgetting the monsters (reset key).
+    void Rebase();
     /// Monster hit by the local hunter; tracked even without a monster list (421631).
     void AddCandidate(uintptr_t instance);
     /// Returns the total HP lost by tracked monsters.
@@ -37,14 +41,20 @@ public:
     static bool IsTrackedType(int type);
 
 private:
+    struct Live {
+        int base = 0;   // HP already lost when counting started
+        int dealt = 0;  // HP lost since then
+    };
+
     int Total() const;
 
-    std::map<uintptr_t, int> live_;  // instance -> HP lost
+    std::map<uintptr_t, Live> live_;
     std::vector<uintptr_t> candidates_;
     std::vector<MonsterState> tracked_;
     std::string described_;
     int completed_ = 0;
     bool listAvailable_ = false;
+    bool fromFirstSight_ = false;
 };
 
 }  // namespace dps::meter

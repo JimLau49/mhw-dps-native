@@ -10,7 +10,8 @@ logs unchanged.
 
 During a quest it shows each hunter's **name**, **damage**, **DPS** and **% of party
 damage** in the top-right corner, and **health bars for the large monsters** on the map
-at the top centre. In the **training area** it counts your damage against
+at the top centre. It also counts damage in **expeditions** and the **Guiding Lands**.
+In the **training area** it counts your damage against
 the pole, with a reset key and a fixed-length **time trial** with per-move results and
 personal bests. Every quest is saved as a JSON fight log.
 
@@ -66,7 +67,7 @@ scripts/install.sh uninstall
 | --- | --- |
 | **F9** | Settings / diagnostics panel (drag the windows by their title bars while open) |
 | **F6** | Show / hide the overlay |
-| **F7** | Training area: reset damage (also clears a finished trial) |
+| **F7** | Training area or expedition: reset damage (also clears a finished trial) |
 | **F8** | Training area: arm / cancel a time trial |
 | **Shift+F6** | Write `logs/live-debug.json` diagnostics |
 
@@ -88,14 +89,28 @@ key can be rebound in `settings.json`, e.g. `"menu": "Ctrl+F9"`, `"overlay": "In
 | % | Share of the party total |
 
 The overlay appears once you depart on a quest and stays on the results screen until
-you leave the map. It stays hidden in the hub, expeditions and the Guiding Lands, which
-have no quest-award table.
+you leave the map. It stays hidden in the hub.
+
+### Expeditions and the Guiding Lands
+
+The game keeps no per-hunter damage table here, so the meter works differently:
+
+- **Your damage** is exact: every hit you land on a large monster, from the game's own
+  damage function.
+- **Other hunters** share one row, `~Name` (one other hunter) or `~Others`: the HP the
+  monsters lost minus your damage. It is an estimate, because it also includes damage
+  from traps, turf wars and monsters fighting each other.
+- **DPS** uses a fighting clock. Time only counts between damage events at most 30 s
+  apart, so tracking, gathering and carts are left out.
+- **F7** resets the expedition damage, for example before the next monster.
+- Expeditions are not saved as fight logs, and there is no cart counter (they have no
+  cart limit).
 
 ### Monster health
 
 A compact row at the top centre (just below a MacBook's notch) shows every large monster alive on the current map: its
 name, HP percentage and a thin bar (green above 50 %, yellow above 25 %, then red), up to
-five per row. It also works in expeditions and the Guiding Lands, and a monster drops off
+five per row. It works in quests, expeditions and the Guiding Lands, and a monster drops off
 when it dies or is captured. Small monsters, barrels and training targets are not shown.
 
 In the F9 panel: **Monster health bars** turns it off, **Monster bar size** scales it

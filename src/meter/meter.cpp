@@ -19,9 +19,13 @@ constexpr double kPollInterval = 0.1;
 constexpr int kTrainingStage = 504;
 constexpr int kGuidingLandsStage = 109;
 constexpr const char* kTrainingHint = "Training  |  %s resets  |  %s time trial  |  DPS since first hit";
+constexpr const char* kExpeditionHint = "Expedition  |  %s resets  |  DPS while fighting";
+constexpr const char* kEstimateHint = "~ = monster HP lost minus yours";
+// Expedition combat clock: a pause in the damage longer than this is not fighting.
+constexpr double kCombatGap = 30.0;
 
-// Expeditions and the Guiding Lands never allocate the quest-award damage table.
-const char* const kUnsupportedMarkers[] = {
+// Quest names of expeditions (the Guiding Lands is matched by stage).
+const char* const kExpeditionMarkers[] = {
     "Expedition", "Guiding Lands", "Expédition", "Expedición", "Spedizione", "Expedição", "探検", "探索",
     "導きの地",   "탐험",          "안내하는 땅", "Экспедиция", "探险", "调查地点",
 };
@@ -98,19 +102,16 @@ bool Meter::IsHuntingStage(int stage) {
         case 501: case 502: case 503:  // quarters
         case 504: case 505: case 506:  // training area, chamber of five, Seliana room
         case 100:                      // InfinityOfNothingHandler
-        case kGuidingLandsStage:
             return false;
         default:
             return stage > 0;
     }
 }
 
-bool Meter::HasMonsters(int stage) { return stage == kGuidingLandsStage || IsHuntingStage(stage); }
-
-bool Meter::IsUnsupportedHunt(int stage, const std::string& questName) {
+bool Meter::IsExpedition(int stage, const std::string& questName) {
     if (stage == kGuidingLandsStage)
         return true;
-    for (const char* marker : kUnsupportedMarkers) {
+    for (const char* marker : kExpeditionMarkers) {
         if (ContainsInsensitive(questName, marker))
             return true;
     }
@@ -211,7 +212,10 @@ void Meter::ProcessCommands() {
     }
     for (Command command : commands) {
         switch (command) {
-            case Command::ResetTraining: ResetTraining(); break;
+            case Command::Reset:
+                ResetTraining();
+                ResetExpedition();
+                break;
             case Command::ToggleTrial: ToggleTrial(); break;
             case Command::DumpDiagnostics: DumpDiagnostics(); break;
         }
@@ -226,10 +230,12 @@ void Meter::Poll() {
     SyncQuestState();
     if (training_)
         PollTraining();
+    else if (inQuest_ && expedition_)
+        PollExpedition();
     else if (inQuest_)
         PollHunt();
-    // Health bars also cover expeditions, the Guiding Lands and the results screen.
-    if (!monstersPolled_ && !training_ && HasMonsters(stageId_))
+    // Health bars also cover the results screen.
+    if (!monstersPolled_ && !training_ && IsHuntingStage(stageId_))
         PollMonsters();
 }
 
@@ -252,10 +258,8 @@ void Meter::SyncQuestState() {
     questState_ = quest.state;
     stageId_ = stage;
 
-    if (quest.id <= 0 || quest.state == game::kQuestNone || quest.state == game::kQuestReady) {
+    if (quest.id <= 0 || quest.state == game::kQuestNone || quest.state == game::kQuestReady)
         finishedQuestId_ = 0;
-        unsupportedQuestId_ = 0;
-    }
 
     if (stage == kTrainingStage && !inQuest_) {
         if (showResults_) {
@@ -321,22 +325,16 @@ void Meter::BeginHunt(int questId) {
     // Same quest that ended a moment ago: the post-quest state flicker, not a new hunt.
     if (questId == finishedQuestId_ && finishedAtQpc_ != 0 && SecondsSince(finishedAtQpc_) < 180.0)
         return;
-    // Expeditions read as InQuest for their whole duration: decide once.
-    if (questId == unsupportedQuestId_)
-        return;
 
+    // Expeditions read as InQuest for their whole duration; inQuest_ makes this run once.
     const std::string questName = QuestNameFor(questId, questInstance_);
-    if (IsUnsupportedHunt(stageId_, questName)) {
-        unsupportedQuestId_ = questId;
-        inQuest_ = false;
-        showResults_ = false;
-        snapshot_.reset();
-        status_ = "expedition/guiding lands (no quest-award damage)";
-        LOG_INFO("quest %d (%s) is an expedition/guiding lands: overlay stays hidden", questId, questName.c_str());
+    if (IsExpedition(stageId_, questName)) {
+        BeginExpedition(questId, questName);
         return;
     }
 
     inQuest_ = true;
+    expedition_ = false;
     showResults_ = false;
     questId_ = questId;
     questName_ = questName;
@@ -358,9 +356,63 @@ void Meter::BeginHunt(int questId) {
     LOG_INFO("hunt started: quest %d \"%s\" on %s", questId, questName.c_str(), data::StageLabel(stageId_).c_str());
 }
 
+void Meter::BeginExpedition(int questId, const std::string& questName) {
+    inQuest_ = true;
+    expedition_ = true;
+    showResults_ = false;
+    questId_ = questId;
+    questName_ = questName;
+    elapsed_ = 0.0f;
+    timerSource_ = "combat";
+    snapshot_ = LocalOnly(0, localName_.empty() ? "You" : localName_, localPlayer_);
+    pollAccumulator_ = 0.0;
+    // Monsters may already be hurt (Guiding Lands, joining a friend): count from now.
+    monsters_.Reset(true);
+    Hits().Reset();
+    Hits().SetAcceptAllTargets(false);
+    Hits().SetRecordHits(true);  // drained every poll; feeds the monster candidates
+    carts_.Reset();
+    combatSeconds_ = 0.0f;
+    lastActivityQpc_ = 0;
+    lastActivityDamage_ = 0;
+    status_ = "expedition: waiting for the first hit";
+    LOG_INFO("expedition started: quest %d \"%s\" on %s", questId, questName.c_str(), data::StageLabel(stageId_).c_str());
+}
+
+void Meter::ResetExpedition() {
+    if (!inQuest_ || !expedition_)
+        return;
+    monsters_.Rebase();
+    Hits().Reset();
+    combatSeconds_ = 0.0f;
+    lastActivityQpc_ = 0;
+    lastActivityDamage_ = 0;
+    elapsed_ = 0.0f;
+    snapshot_ = LocalOnly(0, localName_.empty() ? "You" : localName_, localPlayer_);
+    status_ = "expedition: reset, waiting for the next hit";
+}
+
+void Meter::EndExpedition() {
+    // No fight log: an expedition has no result, and its clock only counts fighting.
+    // finishedQuestId_ stays put so the same expedition can be started again at once.
+    LOG_INFO("expedition ended: quest %d, %d dmg by you in %.0fs of fighting, %d hits", questId_, Hits().LocalDamage(),
+             combatSeconds_, Hits().Hits());
+    inQuest_ = false;
+    expedition_ = false;
+    showResults_ = false;
+    snapshot_.reset();
+    elapsed_ = 0.0f;
+    Hits().SetRecordHits(false);
+    status_ = "left the expedition";
+}
+
 void Meter::EndHunt(const std::string& result) {
     if (!inQuest_)
         return;
+    if (expedition_) {
+        EndExpedition();
+        return;
+    }
 
     inQuest_ = false;
     finishedQuestId_ = questId_;
@@ -455,6 +507,7 @@ void Meter::BeginTraining() {
         return;
     training_ = true;
     inQuest_ = false;
+    expedition_ = false;
     showResults_ = false;
     pollAccumulator_ = 0.0;
     monsters_.Reset();
@@ -674,6 +727,85 @@ void Meter::PollHunt() {
     Logs().UpdateSamples(elapsed_, snapshot->SlotDamage());
 }
 
+void Meter::PollExpedition() {
+    const int hpLost = PollMonsters();
+    Hits().SetLargeMonsters(monsters_.LiveInstances());
+    lastFallbackDamage_ = hpLost;
+
+    // The roster still comes from the session party; no award table exists here, so
+    // party damage is your hooked hits plus everyone else's share of the monster HP lost.
+    ReadParty(0);
+    const game::PartyRead& party = lastParty_;
+    Member local;
+    local.isLocal = true;
+    local.instance = localPlayer_;
+    local.name = localName_.empty() ? "You" : localName_;
+    std::vector<int> others;
+    bool localFound = false;
+    for (int slot = 0; slot < kPartySlots; ++slot) {
+        const std::string& name = party.slots[slot].name;
+        if (name.empty())
+            continue;
+        if (!localFound && !party.localName.empty() && name == party.localName) {
+            local.slot = slot;
+            local.name = name;
+            localFound = true;
+        } else {
+            others.push_back(slot);
+        }
+    }
+    if (!localFound && !others.empty()) {
+        // Save name unreadable: assume the first hunter listed is you.
+        local.slot = others.front();
+        local.name = party.slots[local.slot].name;
+        others.erase(others.begin());
+    }
+
+    const bool hooked = Hits().Hooked();
+    local.damage = hooked ? Hits().LocalDamage() : (others.empty() ? hpLost : 0);
+    Snapshot snapshot;
+    snapshot.members.push_back(local);
+    if (!others.empty()) {
+        Member rest;
+        rest.slot = others.front();
+        rest.name = "~" + (others.size() == 1 ? party.slots[rest.slot].name : std::string("Others"));
+        rest.instance = others.size() == 1 ? party.slots[rest.slot].memberPtr : 0;
+        rest.damage = std::max(0, hpLost - local.damage);
+        snapshot.members.push_back(rest);
+    }
+    Hits().SetLocalSlot(local.slot);
+
+    // Combat clock: runs between damage events (yours, or HP the monsters lose) that
+    // are at most kCombatGap apart, so tracking, gathering and carts do not count.
+    const int activity = local.damage + hpLost;
+    if (activity > lastActivityDamage_) {
+        const int64_t now = QpcNow();
+        if (lastActivityQpc_ != 0) {
+            const double gap = QpcToSeconds(now - lastActivityQpc_);
+            if (gap <= kCombatGap)
+                combatSeconds_ += static_cast<float>(gap);
+        }
+        lastActivityQpc_ = now;
+        lastActivityDamage_ = activity;
+    }
+    elapsed_ = combatSeconds_;
+    snapshot_ = snapshot;
+
+    // Only the monster candidates need the hits (builds without a monster list).
+    std::vector<HitRecord> hits = Hits().Drain();
+    if (!monsters_.ListAvailable()) {
+        for (const auto& hit : hits)
+            monsters_.AddCandidate(hit.target);
+    }
+
+    damageSource_ = hooked ? (others.empty() ? "live hits" : "live hits + monster HP") : "monster HP";
+    if (!hooked && !others.empty())
+        status_ = "expedition: hit hook is off, only party damage from monster HP";
+    else
+        status_ = StrFormat("expedition: %s dmg by you in %.0fs of fighting%s", ThousandsSep(local.damage).c_str(),
+                            combatSeconds_, others.empty() ? "" : StrFormat(", %zu other hunters", others.size()).c_str());
+}
+
 void Meter::PollTraining() {
     PollMonsters();
     if (trial_.Update(Hits().Drain(), reader_.LocalWeapon()))
@@ -740,6 +872,7 @@ void Meter::PublishViews() {
     OverlayView view;
     view.show = inQuest_ || showResults_ || training_;
     view.training = training_;
+    view.expedition = inQuest_ && expedition_;
     view.elapsed = elapsed_;
     if (snapshot_) {
         const float duration = std::max(elapsed_, 1.0f);
@@ -759,10 +892,15 @@ void Meter::PublishViews() {
             return a.damage != b.damage ? a.damage > b.damage : a.slot < b.slot;
         });
     }
-    if (inQuest_ && carts_.Known() && (carts_.MaxDeaths() > 0 || carts_.Deaths() > 0)) {
+    if (inQuest_ && !expedition_ && carts_.Known() && (carts_.MaxDeaths() > 0 || carts_.Deaths() > 0)) {
         view.showCarts = true;
         view.deaths = carts_.Deaths();
         view.maxDeaths = std::max(carts_.MaxDeaths(), carts_.Deaths());
+    }
+    if (view.expedition) {
+        view.hint = StrFormat(kExpeditionHint, s.keyReset.text.c_str());
+        if (snapshot_ && snapshot_->members.size() > 1)
+            view.hint += std::string("\n") + kEstimateHint;
     }
     if (training_) {
         view.hint = StrFormat(kTrainingHint, s.keyReset.text.c_str(), s.keyTrial.text.c_str());
@@ -795,6 +933,7 @@ void Meter::PublishViews() {
     PanelView panel;
     panel.diagnostics = BuildDiagnostics();
     panel.training = training_;
+    panel.expedition = inQuest_ && expedition_;
     panel.hitHook = Hits().Hooked();
     panel.trialState = trial_.State();
 
@@ -840,7 +979,7 @@ std::string Meter::BuildDiagnostics() {
                "Threads: game-thread update %s, guarded faults %llu\n"
                "Module: 0x%llX  data: %s",
                kBuildStamp, status_.c_str(), gameBuild_, buildSource_.c_str(), buildConfirmed_ ? "" : ", unconfirmed",
-               map_.source.c_str(), map_.embedded ? "" : "  (NO BUILT-IN MAP)", inQuest_ ? "yes" : "no", questId_,
+               map_.source.c_str(), map_.embedded ? "" : "  (NO BUILT-IN MAP)", inQuest_ ? (expedition_ ? "expedition" : "yes") : "no", questId_,
                game::DescribeQuestState(questState_), timerSource_.c_str(), elapsed_, data::StageLabel(stageId_).c_str(), stageId_,
                training_ ? "  training mode" : "", damageSource_.c_str(), Hits().Status().c_str(), Hits().Calls(), Hits().Hits(),
                Hits().Ignored(), Hits().LocalDamage(), Hits().LastHit().c_str(), hooks::PartHookStatus().c_str(),
@@ -870,6 +1009,7 @@ void Meter::DumpDiagnostics() {
     json["map"] = map_.source;
     json["status"] = status_;
     json["inQuest"] = inQuest_;
+    json["expedition"] = inQuest_ && expedition_;
     json["training"] = training_;
     json["questId"] = questId_;
     json["questName"] = questName_;

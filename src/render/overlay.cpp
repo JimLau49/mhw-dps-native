@@ -247,7 +247,7 @@ void DrawOverlay(const meter::OverlayView& view, const Settings& s, bool menuOpe
 
     Text("DPS");
     ImGui::SameLine();
-    Disabled(view.training ? "training" : "");
+    Disabled(view.training ? "training" : view.expedition ? "expedition" : "");
     ImGui::Separator();
 
     if (view.members.empty()) {
@@ -468,10 +468,10 @@ void DrawPanel(const Settings& s) {
 
     if (ImGui::Button(StrFormat("Dump diagnostics (%s)", s.keyDiagnostics.text.c_str()).c_str()))
         meter::Instance().Post(meter::Command::DumpDiagnostics);
-    if (panel.training) {
+    if (panel.training || panel.expedition) {
         ImGui::SameLine();
-        if (ImGui::Button(StrFormat("Reset training damage (%s)", s.keyReset.text.c_str()).c_str()))
-            meter::Instance().Post(meter::Command::ResetTraining);
+        if (ImGui::Button(StrFormat("Reset %s damage (%s)", panel.training ? "training" : "expedition", s.keyReset.text.c_str()).c_str()))
+            meter::Instance().Post(meter::Command::Reset);
     }
 
     bool visible = s.overlayVisible;
@@ -515,9 +515,10 @@ void DrawPanel(const Settings& s) {
         g_monsterAnchor = Anchor{};
         SaveAnchors();
     }
-    Text(StrFormat("%s overlay   %s panel   %s diagnostics   %s reset training   %s time trial", s.keyOverlay.text.c_str(),
-                   s.keyMenu.text.c_str(), s.keyDiagnostics.text.c_str(), s.keyReset.text.c_str(), s.keyTrial.text.c_str()));
-    Disabled("Damage shows after you depart on a quest and in the training area; monster health on any field map.");
+    Text(StrFormat("%s overlay   %s panel   %s diagnostics   %s reset training/expedition   %s time trial",
+                   s.keyOverlay.text.c_str(), s.keyMenu.text.c_str(), s.keyDiagnostics.text.c_str(), s.keyReset.text.c_str(),
+                   s.keyTrial.text.c_str()));
+    Disabled("Damage shows on quests (after you depart), expeditions, the Guiding Lands and the training area.");
 
     DrawTrialSettings(panel, s);
     DrawHistory();

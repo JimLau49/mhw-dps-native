@@ -140,7 +140,7 @@ void PollHotkeys() {
     if (Pressed(overlay, g_edges.overlay))
         settings::Update([](Settings& value) { value.overlayVisible = !value.overlayVisible; });
     if (Pressed(reset, g_edges.reset))
-        meter::Instance().Post(meter::Command::ResetTraining);
+        meter::Instance().Post(meter::Command::Reset);
     if (Pressed(trial, g_edges.trial))
         meter::Instance().Post(meter::Command::ToggleTrial);
     if (Pressed(diagnostics, g_edges.diagnostics))

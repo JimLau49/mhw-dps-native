@@ -529,6 +529,35 @@ void TestRender(int frames, bool flip) {
             SaveBmp(bmp, g_readback.width, g_readback.height, g_readback.pixels);
             std::printf("  wrote %s\n", WideToUtf8(bmp).c_str());
         }
+
+        // Expedition with a friend: your hooked damage plus the estimated row.
+        meter::OverlayView expedition;
+        expedition.show = true;
+        expedition.expedition = true;
+        expedition.elapsed = 95.0f;
+        expedition.members = {{0, "ハンター", 12400, 130.5f, 61.1f, true}, {1, "~사냥꾼", 7900, 83.2f, 38.9f, false}};
+        expedition.total = 20300;
+        expedition.hint = "Expedition  |  F7 resets  |  DPS while fighting\n~ = monster HP lost minus yours";
+        expedition.monsters = {{"Rathalos", 3100.0f, 5200.0f}};
+        meter::Instance().PublishForTest(expedition);
+        g_readback = Readback{};
+        g_readback.captureAt = 10;
+        for (int i = 0; i < 15; ++i) {
+            MSG msg;
+            while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            if (rtv)
+                context->ClearRenderTargetView(rtv, kClear);
+            swapChain->Present(1, 0);
+        }
+        Check(g_readback.done && g_readback.changed > 2000, "expedition meter drawn");
+        if (!g_readback.pixels.empty()) {
+            const std::wstring bmp = JoinPath(GameDirectory(), L"harness-expedition.bmp");
+            SaveBmp(bmp, g_readback.width, g_readback.height, g_readback.pixels);
+            std::printf("  wrote %s\n", WideToUtf8(bmp).c_str());
+        }
     }
 
     // Resize through the hook (the overlay must release its view first or this fails).

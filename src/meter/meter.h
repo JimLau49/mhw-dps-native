@@ -48,8 +48,9 @@ struct MonsterBar {
 
 /// Everything the overlay draws; rebuilt by every poll and copied by the renderer.
 struct OverlayView {
-    bool show = false;  // in a quest, on the results screen, or in the training area
+    bool show = false;  // in a quest or expedition, on the results screen, or in the training area
     bool training = false;
+    bool expedition = false;  // expeditions and the Guiding Lands
     std::vector<MemberView> members;  // sorted by damage
     int total = 0;
     float elapsed = 0.0f;
@@ -59,22 +60,23 @@ struct OverlayView {
     std::string hint;
     bool trialActive = false;
     TrialView trial;
-    /// Large monsters alive on the current map (health bars). Also filled in
-    /// expeditions and the Guiding Lands, where the damage table is hidden.
+    /// Large monsters alive on the current map (health bars), also on the results screen.
     std::vector<MonsterBar> monsters;
 };
 
 struct PanelView {
     std::string diagnostics;
     bool training = false;
+    bool expedition = false;
     bool hitHook = false;
     TrialState trialState = TrialState::Idle;
 };
 
-enum class Command { ResetTraining, ToggleTrial, DumpDiagnostics };
+/// Reset clears the training area or expedition damage.
+enum class Command { Reset, ToggleTrial, DumpDiagnostics };
 
-/// Hunt / training state machine (port of the C# Plugin): polls the game at 10 Hz,
-/// merges award-table, hooked-hit and monster-HP damage, records fight logs.
+/// Hunt / expedition / training state machine (port of the C# Plugin): polls the game
+/// at 10 Hz, merges award-table, hooked-hit and monster-HP damage, records fight logs.
 class Meter {
 public:
     void Init(const mem::ModuleInfo& exe, AddressMap map, int gameBuild, bool buildConfirmed, std::string buildSource);
@@ -119,12 +121,16 @@ private:
     void SyncQuestState();
     void BeginHunt(int questId);
     void EndHunt(const std::string& result);
+    void BeginExpedition(int questId, const std::string& questName);
+    void EndExpedition();
     void BeginTraining();
     void EndTraining();
     void ResetTraining();
+    void ResetExpedition();
     void ToggleTrial();
     void FinishTrial();
     void PollHunt();
+    void PollExpedition();
     void PollTraining();
     int PollMonsters();
     void DumpDiagnostics();
@@ -140,10 +146,10 @@ private:
     std::string BuildDiagnostics();
     std::string QuestNameFor(int questId, uintptr_t questInstance);
     static Snapshot LocalOnly(int damage, const std::string& name, uintptr_t instance);
+    /// Field maps with large monsters, the Guiding Lands included.
     static bool IsHuntingStage(int stage);
-    /// Field maps with large monsters (hunting stages plus the Guiding Lands).
-    static bool HasMonsters(int stage);
-    static bool IsUnsupportedHunt(int stage, const std::string& questName);
+    /// Expeditions and the Guiding Lands: no quest-award damage table and no time limit.
+    static bool IsExpedition(int stage, const std::string& questName);
 
     bool ready_ = false;
     mem::ModuleInfo exe_;
@@ -178,6 +184,7 @@ private:
     bool inQuest_ = false;
     bool showResults_ = false;
     bool training_ = false;
+    bool expedition_ = false;  // with inQuest_: an expedition or the Guiding Lands
     int questId_ = 0;
     std::string questName_;
     uint32_t questState_ = 0;
@@ -191,7 +198,10 @@ private:
     std::string timerSource_ = "local";
     int finishedQuestId_ = 0;
     int64_t finishedAtQpc_ = 0;
-    int unsupportedQuestId_ = 0;
+    // Expedition combat clock: gaps between damage longer than kCombatGap are not counted.
+    float combatSeconds_ = 0.0f;
+    int64_t lastActivityQpc_ = 0;
+    int lastActivityDamage_ = 0;
     uintptr_t localPlayer_ = 0;
     std::string localName_;
     std::string status_ = "starting";
